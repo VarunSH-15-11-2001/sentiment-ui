@@ -16,7 +16,7 @@ import { Loader2, History, Trash2, Wand2, Upload, Settings2 } from "lucide-react
  * - Configurable API base URL (persisted)
  */
 
-const DEFAULT_URL = (window.RUNTIME_CONFIG && window.RUNTIME_CONFIG.API_BASE) || "http://localhost:8080";
+const DEFAULT_URL = (window.RUNTIME_CONFIG && window.RUNTIME_CONFIG.API_BASE) || "https://sentiment-api-493249954211.us-west1.run.app/";
 
 export default function SentimentApp() {
   const [apiBase, setApiBase] = useState(() => localStorage.getItem("apiBase") || DEFAULT_URL);
@@ -25,6 +25,7 @@ export default function SentimentApp() {
   const [result, setResult] = useState(null);
   const [error, setError] = useState("");
   const [batchOpen, setBatchOpen] = useState(false);
+  const [batchResults, setBatchResults] = useState(null);
   const [batchText, setBatchText] = useState("");
   const [history, setHistory] = useState(() => {
     try { return JSON.parse(localStorage.getItem("history") || "[]"); } catch { return []; }
@@ -56,7 +57,7 @@ export default function SentimentApp() {
     setBusy(true); setError("");
     try {
       const lines = batchText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-      const items = lines.map((l, i) => ({ id: String(i+1), text: l }));
+      const items = lines.map((l, i) => ({ id: String(i + 1), text: l }));
       const r = await fetch(`${api}/batch`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -64,23 +65,33 @@ export default function SentimentApp() {
       });
       if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
       const data = await r.json();
-      // Turn batch results into CSV & download
-      const rows = [["id","text","label","neg","neu","pos"]];
-      data.results.forEach((it, idx) => {
-        const original = items[idx]?.text ?? "";
-        const scores = Object.fromEntries(it.scores.map(s => [s.label.toLowerCase(), s.score]));
-        rows.push([it.id, original.replaceAll('"','\"'), it.label, scores.negative ?? "", scores.neutral ?? "", scores.positive ?? ""]);
-      });
-      const csv = rows.map(r => r.map((v) => /[",\n]/.test(String(v)) ? `"${String(v)}"` : String(v)).join(",")).join("\n");
-      const blob = new Blob([csv], { type: "text/csv" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url; a.download = "sentiment_batch.csv"; a.click();
-      URL.revokeObjectURL(url);
+
+      // Merge results with original text to show on screen
+      const merged = data.results.map((res, idx) => ({
+        id: res.id,
+        text: items[idx]?.text ?? "",
+        label: res.label,
+        scores: res.scores,
+      }));
+      setBatchResults({ model: data.model, items: merged });
+
+      // Add each item to history
+      setHistory((h) => [
+        ...merged.map(m => ({
+          ts: Date.now(),
+          text: m.text,
+          result: { label: m.label, scores: m.scores, model: data.model, latency_ms: 0 }
+        })),
+        ...h
+      ].slice(0, 50));
+
+      // Keep data for optional CSV download
+      window.__lastBatchForCsv = { items, results: data.results };
     } catch (e) {
       setError(String(e));
     } finally { setBusy(false); }
   };
+
 
   const clearHistory = () => setHistory([]);
 
@@ -120,7 +131,7 @@ export default function SentimentApp() {
                 disabled={!text.trim() || busy}
                 className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-slate-900 text-white disabled:opacity-40"
               >
-                {busy ? <Loader2 className="w-4 h-4 animate-spin"/> : <Wand2 className="w-4 h-4"/>}
+                {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wand2 className="w-4 h-4" />}
                 Analyze
               </button>
               <button
@@ -145,7 +156,7 @@ export default function SentimentApp() {
                     disabled={!batchText.trim() || busy}
                     className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-slate-900 text-white disabled:opacity-40"
                   >
-                    <Upload className="w-4 h-4"/>
+                    <Upload className="w-4 h-4" />
                     Run & Download CSV
                   </button>
                 </div>
@@ -164,11 +175,10 @@ export default function SentimentApp() {
           {result && (
             <div className="mt-4 bg-white rounded-2xl shadow-sm border border-slate-200 p-4">
               <div className="flex items-center gap-2 mb-2">
-                <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${
-                  result.label === 'Positive' ? 'bg-emerald-100 text-emerald-800' :
+                <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${result.label === 'Positive' ? 'bg-emerald-100 text-emerald-800' :
                   result.label === 'Negative' ? 'bg-rose-100 text-rose-800' :
-                  'bg-slate-100 text-slate-800'
-                }`}>
+                    'bg-slate-100 text-slate-800'
+                  }`}>
                   {result.label}
                 </span>
                 <span className="text-xs text-slate-500">{result.model}</span>
@@ -182,16 +192,57 @@ export default function SentimentApp() {
               </div>
             </div>
           )}
+          {/* Batch Results (on-screen) */}
+          {batchResults && (
+            <div className="mt-4 bg-white rounded-2xl shadow-sm border border-slate-200 p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <span className="text-sm font-medium text-slate-700">Batch results</span>
+                <span className="text-xs text-slate-500">
+                  {batchResults.items.length} items · {batchResults.model}
+                </span>
+                <button
+                  onClick={() => downloadCsv(window.__lastBatchForCsv)}
+                  className="ml-auto text-xs px-3 py-1.5 border border-slate-300 rounded-lg"
+                >
+                  Download CSV
+                </button>
+              </div>
+              <ul className="space-y-3">
+                {batchResults.items.map((it) => (
+                  <li key={it.id} className="border border-slate-200 rounded-xl p-3">
+                    <div className="flex items-center gap-2 mb-2">
+                      <span
+                        className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs ${it.label === 'Positive' ? 'bg-emerald-100 text-emerald-800' :
+                            it.label === 'Negative' ? 'bg-rose-100 text-rose-800' :
+                              'bg-slate-100 text-slate-800'
+                          }`}
+                      >
+                        {it.label}
+                      </span>
+                      <span className="text-[11px] text-slate-500">id {it.id}</span>
+                    </div>
+                    <p className="text-sm whitespace-pre-wrap break-words mb-2">{it.text}</p>
+                    <div className="space-y-2">
+                      {it.scores.map((s) => (
+                        <ConfidenceBar key={s.label} label={s.label} value={s.score} />
+                      ))}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
         </section>
 
         {/* Right column: history */}
         <aside>
           <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-4 h-full">
             <div className="flex items-center gap-2 mb-3">
-              <History className="w-4 h-4"/>
+              <History className="w-4 h-4" />
               <h2 className="font-medium">History</h2>
               <button onClick={clearHistory} className="ml-auto inline-flex items-center gap-1 text-xs text-slate-600 hover:text-rose-600">
-                <Trash2 className="w-3 h-3"/> Clear
+                <Trash2 className="w-3 h-3" /> Clear
               </button>
             </div>
             {history.length === 0 ? (
@@ -201,11 +252,10 @@ export default function SentimentApp() {
                 {history.map((h, i) => (
                   <li key={i} className="border border-slate-200 rounded-xl p-3">
                     <div className="flex items-center gap-2 mb-2">
-                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs ${
-                        h.result.label === 'Positive' ? 'bg-emerald-100 text-emerald-800' :
+                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs ${h.result.label === 'Positive' ? 'bg-emerald-100 text-emerald-800' :
                         h.result.label === 'Negative' ? 'bg-rose-100 text-rose-800' :
-                        'bg-slate-100 text-slate-800'
-                      }`}>{h.result.label}</span>
+                          'bg-slate-100 text-slate-800'
+                        }`}>{h.result.label}</span>
                       <span className="text-[11px] text-slate-500">{new Date(h.ts).toLocaleString()}</span>
                     </div>
                     <p className="text-sm whitespace-pre-wrap break-words">{h.text}</p>
