@@ -157,7 +157,7 @@ export default function SentimentApp() {
                     className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-slate-900 text-white disabled:opacity-40"
                   >
                     <Upload className="w-4 h-4" />
-                    Run & Download CSV
+                    Run
                   </button>
                 </div>
               </div>
@@ -200,12 +200,12 @@ export default function SentimentApp() {
                 <span className="text-xs text-slate-500">
                   {batchResults.items.length} items · {batchResults.model}
                 </span>
-                <button
+                {/* <button
                   onClick={() => downloadCsv(window.__lastBatchForCsv)}
                   className="ml-auto text-xs px-3 py-1.5 border border-slate-300 rounded-lg"
                 >
                   Download CSV
-                </button>
+                </button> */}
               </div>
               <ul className="space-y-3">
                 {batchResults.items.map((it) => (
